@@ -21,6 +21,8 @@ object ApkSigningBlockInspector {
     const val ID_SOURCE_STAMP_V1 = 0x2b09189e
     const val ID_SOURCE_STAMP_V2 = 0x6dff800d
     const val ID_DEPENDENCY_INFO = 0x504b4453
+    const val ID_VERITY_PADDING = 0x42726577
+    const val ID_PLAY_FROSTING = 0x2146444e
 
     private val APK_SIG_BLOCK_MAGIC = "APK Sig Block 42".toByteArray(Charsets.US_ASCII)
     private const val ZIP_EOCD_SIG = 0x06054b50
@@ -34,8 +36,25 @@ object ApkSigningBlockInspector {
         val hasV31Block: Boolean,
         val hasSourceStampBlock: Boolean,
         val blockIdsHex: List<String>,
+        val blockIdsNamed: List<String>,
         val signingBlockSizeBytes: Long?
     )
+
+    fun describeBlockId(id: Int): String {
+        val hex = "0x" + Integer.toHexString(id)
+        val label = when (id) {
+            ID_V2_BLOCK -> "APK Signature Scheme v2"
+            ID_V3_BLOCK -> "APK Signature Scheme v3"
+            ID_V31_BLOCK -> "APK Signature Scheme v3.1 (Key Rotation)"
+            ID_SOURCE_STAMP_V1 -> "SourceStamp v1"
+            ID_SOURCE_STAMP_V2 -> "SourceStamp v2"
+            ID_DEPENDENCY_INFO -> "Dependency Info (AGP)"
+            ID_VERITY_PADDING -> "Verity Padding Block"
+            ID_PLAY_FROSTING -> "Google Play Frosting Metadata"
+            else -> "Bloc personnalisé"
+        }
+        return "$hex ($label)"
+    }
 
     data class V4IdsigSummary(
         val version: Int,
@@ -115,6 +134,7 @@ object ApkSigningBlockInspector {
             hasV31Block = blockIds.contains(ID_V31_BLOCK),
             hasSourceStampBlock = blockIds.contains(ID_SOURCE_STAMP_V1) || blockIds.contains(ID_SOURCE_STAMP_V2),
             blockIdsHex = blockIds.map { "0x" + Integer.toHexString(it) },
+            blockIdsNamed = blockIds.map { describeBlockId(it) },
             signingBlockSizeBytes = blockSize
         )
     }

@@ -61,22 +61,34 @@ class HsignerProtocolRobolectricTest {
             manualCommandIds.add(commands.getJSONObject(i).getString("id"))
         }
 
-        var hasFilePicker = false
+        var filePickerCount = 0
+        var dropdownCount = 0
+        var toggleCount = 0
+        var actionButtonCount = 0
         var hasVerifyBtn = false
         var hasReadmeBtn = false
+        var hasStorageBtn = false
+        var hasCapabilitiesBtn = false
 
         for (i in 0 until elements.length()) {
             val el = elements.getJSONObject(i)
             val type = el.getString("type")
-            if (type == "file_picker") {
-                hasFilePicker = true
-                assertFalse(el.optString("title").isBlank())
-            }
-            if (type == "action_button") {
-                val cmdId = el.getString("command_id")
-                assertTrue("UI command_id '$cmdId' must be documented in manual.commands", manualCommandIds.contains(cmdId))
-                if (el.optString("title") == "Verify" || el.optString("label") == "Verify") hasVerifyBtn = true
-                if (el.optString("title") == "Readme" || el.optString("label") == "Readme") hasReadmeBtn = true
+            assertFalse("Every dashboard element '$type' must have a non-blank title", el.optString("title").isBlank())
+            when (type) {
+                "file_picker" -> filePickerCount++
+                "dropdown" -> dropdownCount++
+                "toggle" -> toggleCount++
+                "action_button" -> {
+                    actionButtonCount++
+                    val cmdId = el.getString("command_id")
+                    assertTrue("UI command_id '$cmdId' must be documented in manual.commands", manualCommandIds.contains(cmdId))
+                    when (cmdId) {
+                        HephaistosContract.CMD_VERIFY_APK -> hasVerifyBtn = true
+                        HephaistosContract.CMD_GET_README -> hasReadmeBtn = true
+                        HephaistosContract.CMD_OPEN_STORAGE_SETTINGS -> hasStorageBtn = true
+                        HephaistosContract.CMD_INSPECT_CAPABILITIES -> hasCapabilitiesBtn = true
+                    }
+                }
             }
         }
         for (i in 0 until popups.length()) {
@@ -84,9 +96,14 @@ class HsignerProtocolRobolectricTest {
             assertTrue("Popup command_id '$cmdId' must be documented in manual.commands", manualCommandIds.contains(cmdId))
         }
 
-        assertTrue(hasFilePicker)
+        assertEquals(2, filePickerCount)
+        assertEquals(1, dropdownCount)
+        assertEquals(3, toggleCount)
+        assertEquals(4, actionButtonCount)
         assertTrue(hasVerifyBtn)
         assertTrue(hasReadmeBtn)
+        assertTrue(hasStorageBtn)
+        assertTrue(hasCapabilitiesBtn)
 
         val decoded = com.hephaistos.hsigner.engine.ApkInputResolver.decodeSafDocumentPath(
             Uri.parse("content://com.android.externalstorage.documents/document/primary%3ARecordings%2FStorageManager%2FStorageManager.apk")
@@ -107,6 +124,7 @@ class HsignerProtocolRobolectricTest {
         )
         assertEquals("success", readmeRes.getString("status"))
         assertTrue(readmeRes.getString("readme_markdown").contains("com.hephaistos.action.EXECUTE"))
+        assertTrue(readmeRes.getString("readme_markdown").contains("detail_level"))
         assertTrue(readmeRes.getString("readme_uri").startsWith("content://com.hephaistos.hsigner.fileprovider/"))
 
         val capRes = processor.executeCommand(
@@ -117,6 +135,8 @@ class HsignerProtocolRobolectricTest {
         )
         assertEquals("success", capRes.getString("status"))
         assertEquals(5, capRes.getJSONArray("supported_schemes").length())
+        assertTrue(capRes.getString("diagnostic_report").contains("DIAGNOSTIC MOTEUR HSIGNER"))
+        assertEquals(5, capRes.getJSONArray("commands").length())
 
         val provider = HsignerContentProvider()
         val cursor = provider.query(Uri.parse("content://${HephaistosContract.CONTENT_PROVIDER_AUTHORITY}/info"), null, null, null, null)

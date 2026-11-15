@@ -74,6 +74,9 @@ class HsignerCommandProcessor(
             params.opt("idsig_uris") ?: params.opt("idsig_uri")
         )
         val includeRawBits = params.optBoolean("include_raw_bits", true)
+        val includeApkFileHashes = params.optBoolean("include_apk_file_hashes", true)
+        val includeManifestAudit = params.optBoolean("include_manifest_audit", true)
+        val detailLevel = params.optString("detail_level", "ultra_complet").ifBlank { "ultra_complet" }
         val includeJson = params.optBoolean("include_json", true)
 
         if (rawApkInputs.isEmpty()) {
@@ -196,12 +199,14 @@ class HsignerCommandProcessor(
                         apkFile = resolved.apkFile,
                         displayPath = resolved.displayPath,
                         explicitIdsigFile = resolved.idsigFile,
-                        includeRawBits = includeRawBits
+                        includeRawBits = includeRawBits,
+                        includeApkFileHashes = includeApkFileHashes,
+                        includeManifestAudit = includeManifestAudit
                     )
                     if (!report.isVerified) allVerified = false
                     lastSummary = "${report.metadata.appName} — ${report.schemeSummary} (${report.certificates.size} cert.)"
 
-                    val terminalBlock = SignatureReportFormatter.formatTerminalReport(report)
+                    val terminalBlock = SignatureReportFormatter.formatTerminalReport(report, detailLevel)
                     if (combinedText.isNotEmpty()) {
                         combinedText.appendLine()
                         combinedText.appendLine("================================================================================")
@@ -220,7 +225,13 @@ class HsignerCommandProcessor(
                     }
 
                     if (includeJson) {
-                        resultsArray.put(SignatureReportFormatter.toJson(report, includeTerminalText = true))
+                        resultsArray.put(
+                            SignatureReportFormatter.toJson(
+                                report = report,
+                                includeTerminalText = true,
+                                detailLevel = detailLevel
+                            )
+                        )
                     }
                 }
             }
@@ -425,11 +436,34 @@ class HsignerCommandProcessor(
         sourcePackage: String?,
         emitBroadcasts: Boolean
     ): JSONObject {
+        val allFilesAccess = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching { android.os.Environment.isExternalStorageManager() }.getOrDefault(false)
+        } else {
+            true
+        }
+        val siblingModules = runCatching {
+            com.hephaistos.hsigner.protocol.HephaistosModuleClient(context)
+                .discoverModules()
+                .map { it.packageName }
+        }.getOrDefault(emptyList())
+
+        val diagnosticText = buildString {
+            appendLine("=== DIAGNOSTIC MOTEUR HSIGNER ===")
+            appendLine("Package : ${HephaistosContract.MODULE_PACKAGE} (v1.0.0)")
+            appendLine("Protocole HEPHAISTOS : v1.0")
+            appendLine("Accès direct fichiers (All Files Access) : ${if (allFilesAccess) "AUTORISÉ" else "NON AUTORISÉ (utilisez le bouton 'Autoriser l'accès stockage' si besoin)"}")
+            appendLine("Schémas supportés : V1 (JAR), V2, V3, V3.1 (Key Rotation), V4 (.idsig), SourceStamp")
+            appendLine("Empreintes calculées : CRC32, MD5, SHA-1, SHA-224, SHA-256, SHA-384, SHA-512, SPKI Pin")
+            appendLine("Modules HEPHAISTOS détectés (${siblingModules.size}) : ${if (siblingModules.isEmpty()) "Aucun" else siblingModules.joinToString(", ")}")
+        }.trimEnd()
+
         val resultJson = JSONObject().apply {
             put("status", "success")
             put("module", HephaistosContract.MODULE_PACKAGE)
             put("version", "1.0.0")
             put("protocol_version", "1.0")
+            put("all_files_access_granted", allFilesAccess)
+            put("discovered_modules", JSONArray(siblingModules))
             put("supported_schemes", JSONArray(listOf("V1", "V2", "V3", "V3.1", "V4")))
             put("supported_digests", JSONArray(listOf("CRC32", "MD5", "SHA-1", "SHA-224", "SHA-256", "SHA-384", "SHA-512")))
             put("commands", JSONArray(listOf(
@@ -439,10 +473,21 @@ class HsignerCommandProcessor(
                 HephaistosContract.CMD_INSPECT_CAPABILITIES,
                 HephaistosContract.CMD_OPEN_STORAGE_SETTINGS
             )))
+            put("diagnostic_report", diagnosticText)
             put("manifest", runCatching { JSONObject(readRawManifestString()) }.getOrNull())
         }
 
         if (emitBroadcasts) {
+            bridge.logOut(diagnosticText, sourcePackage)
+            bridge.progress(
+                taskId = "diag_${System.currentTimeMillis()}",
+                title = "HSIGNER — Diagnostic",
+                message = "Accès fichiers : ${if (allFilesAccess) "OK" else "Requis"} | Modules : ${siblingModules.size} (Détails dans le terminal >_)",
+                progress = 100,
+                completed = true,
+                canCancel = false,
+                targetSourcePackage = sourcePackage
+            )
             bridge.sendCommandResult(
                 commandId = HephaistosContract.CMD_INSPECT_CAPABILITIES,
                 sourcePackage = sourcePackage,

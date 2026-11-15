@@ -7,8 +7,8 @@ import java.util.zip.ZipFile
 
 /**
  * Parseur léger de AndroidManifest.xml binaire (AXML) autonome (compatible JVM et Android).
- * Permet d'extraire package, versionName, versionCode, minSdk, targetSdk et label
- * même si PackageManager.getPackageArchiveInfo échoue ou sur environnement JVM.
+ * Extrait package, versionName, versionCode, minSdk, targetSdk, compileSdk, label,
+ * flags de sécurité (debuggable, allowBackup, usesCleartextTraffic, testOnly) et permissions.
  */
 object BinaryXmlManifestParser {
 
@@ -18,7 +18,13 @@ object BinaryXmlManifestParser {
         val versionCode: Long? = null,
         val appLabel: String? = null,
         val minSdkVersion: Int? = null,
-        val targetSdkVersion: Int? = null
+        val targetSdkVersion: Int? = null,
+        val compileSdkVersion: Int? = null,
+        val debuggable: Boolean? = null,
+        val allowBackup: Boolean? = null,
+        val usesCleartextTraffic: Boolean? = null,
+        val testOnly: Boolean? = null,
+        val permissions: List<String> = emptyList()
     )
 
     private const val CHUNK_AXML_FILE = 0x00080003
@@ -30,6 +36,7 @@ object BinaryXmlManifestParser {
     private const val TYPE_STRING = 0x03
     private const val TYPE_INT_DEC = 0x10
     private const val TYPE_INT_HEX = 0x11
+    private const val TYPE_INT_BOOLEAN = 0x12
 
     fun parseFromApk(apkFile: File): ParsedManifest {
         return runCatching {
@@ -57,6 +64,12 @@ object BinaryXmlManifestParser {
         var appLabel: String? = null
         var minSdk: Int? = null
         var targetSdk: Int? = null
+        var compileSdk: Int? = null
+        var debuggable: Boolean? = null
+        var allowBackup: Boolean? = null
+        var usesCleartextTraffic: Boolean? = null
+        var testOnly: Boolean? = null
+        val permissions = linkedSetOf<String>()
 
         var offset = 8
         while (offset + 8 <= data.size) {
@@ -108,13 +121,40 @@ object BinaryXmlManifestParser {
                                         attrName == "versionName" || attrResId == 0x0101021c -> {
                                             versionName = resolveString(strings, rawValIdx, valueType, valueData)
                                         }
+                                        attrName == "compileSdkVersion" || attrResId == 0x01010572 -> {
+                                            if (valueType == TYPE_INT_DEC || valueType == TYPE_INT_HEX) {
+                                                compileSdk = valueData
+                                            }
+                                        }
                                     }
                                 }
                                 "application" -> {
-                                    if (attrName == "label" || attrResId == 0x01010001) {
-                                        val resolved = resolveString(strings, rawValIdx, valueType, valueData)
-                                        if (!resolved.isNullOrBlank()) {
-                                            appLabel = resolved
+                                    when {
+                                        attrName == "label" || attrResId == 0x01010001 -> {
+                                            val resolved = resolveString(strings, rawValIdx, valueType, valueData)
+                                            if (!resolved.isNullOrBlank()) {
+                                                appLabel = resolved
+                                            }
+                                        }
+                                        attrName == "debuggable" || attrResId == 0x0101000f -> {
+                                            if (valueType == TYPE_INT_BOOLEAN || valueType == TYPE_INT_DEC) {
+                                                debuggable = valueData != 0
+                                            }
+                                        }
+                                        attrName == "allowBackup" || attrResId == 0x01010280 -> {
+                                            if (valueType == TYPE_INT_BOOLEAN || valueType == TYPE_INT_DEC) {
+                                                allowBackup = valueData != 0
+                                            }
+                                        }
+                                        attrName == "usesCleartextTraffic" || attrResId == 0x010104ec -> {
+                                            if (valueType == TYPE_INT_BOOLEAN || valueType == TYPE_INT_DEC) {
+                                                usesCleartextTraffic = valueData != 0
+                                            }
+                                        }
+                                        attrName == "testOnly" || attrResId == 0x01010272 -> {
+                                            if (valueType == TYPE_INT_BOOLEAN || valueType == TYPE_INT_DEC) {
+                                                testOnly = valueData != 0
+                                            }
                                         }
                                     }
                                 }
@@ -130,6 +170,12 @@ object BinaryXmlManifestParser {
                                                 targetSdk = valueData
                                             }
                                         }
+                                    }
+                                }
+                                "uses-permission", "uses-permission-sdk-23" -> {
+                                    if (attrName == "name" || attrResId == 0x01010003) {
+                                        val perm = resolveString(strings, rawValIdx, valueType, valueData)
+                                        if (!perm.isNullOrBlank()) permissions.add(perm)
                                     }
                                 }
                             }
@@ -154,7 +200,13 @@ object BinaryXmlManifestParser {
             versionCode = combinedVersionCode,
             appLabel = appLabel,
             minSdkVersion = minSdk,
-            targetSdkVersion = targetSdk
+            targetSdkVersion = targetSdk,
+            compileSdkVersion = compileSdk,
+            debuggable = debuggable,
+            allowBackup = allowBackup,
+            usesCleartextTraffic = usesCleartextTraffic,
+            testOnly = testOnly,
+            permissions = permissions.toList()
         )
     }
 
@@ -192,7 +244,6 @@ object BinaryXmlManifestParser {
                 continue
             }
             if (isUtf8) {
-                // Skip UTF-16 char count
                 val (_, next1) = readLength8(data, pos)
                 val (byteLen, next2) = readLength8(data, next1)
                 pos = next2

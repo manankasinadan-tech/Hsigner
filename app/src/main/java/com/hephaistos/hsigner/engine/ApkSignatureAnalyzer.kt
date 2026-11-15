@@ -11,8 +11,8 @@ import java.security.cert.X509Certificate
 
 /**
  * Moteur principal de vérification et d'analyse cryptographique des signatures APK.
- * Combine Google apksig (V1, V2, V3, V3.1, V4), l'inspecteur binaire de blocs APK Signing Block
- * et l'analyse X.509 complète.
+ * Combine Google apksig (V1, V2, V3, V3.1, V4), l'inspecteur binaire de blocs APK Signing Block,
+ * l'extracteur forensique du fichier APK, l'analyseur AXML Manifest et l'analyse X.509 complète.
  */
 class ApkSignatureAnalyzer(private val context: Context? = null) {
 
@@ -20,7 +20,9 @@ class ApkSignatureAnalyzer(private val context: Context? = null) {
         apkFile: File,
         displayPath: String = apkFile.absolutePath,
         explicitIdsigFile: File? = null,
-        includeRawBits: Boolean = true
+        includeRawBits: Boolean = true,
+        includeApkFileHashes: Boolean = true,
+        includeManifestAudit: Boolean = true
     ): ApkVerificationReport {
         val parsedManifest = BinaryXmlManifestParser.parseFromApk(apkFile)
         val pmMetadata = resolvePackageManagerMetadata(apkFile)
@@ -40,9 +42,19 @@ class ApkSignatureAnalyzer(private val context: Context? = null) {
             versionCode = versionCode,
             minSdkVersion = parsedManifest.minSdkVersion,
             targetSdkVersion = parsedManifest.targetSdkVersion,
+            compileSdkVersion = parsedManifest.compileSdkVersion,
             displayPath = displayPath,
-            fileSizeBytes = apkFile.length()
+            fileSizeBytes = apkFile.length(),
+            debuggable = if (includeManifestAudit) parsedManifest.debuggable else null,
+            allowBackup = if (includeManifestAudit) parsedManifest.allowBackup else null,
+            usesCleartextTraffic = if (includeManifestAudit) parsedManifest.usesCleartextTraffic else null,
+            testOnly = if (includeManifestAudit) parsedManifest.testOnly else null,
+            permissions = if (includeManifestAudit) parsedManifest.permissions else emptyList()
         )
+
+        val fileForensics = if (includeApkFileHashes) {
+            runCatching { ApkFileForensicsExtractor.extract(apkFile) }.getOrNull()
+        } else null
 
         val detectedBlocks = ApkSigningBlockInspector.inspect(apkFile)
         val idsigFile = explicitIdsigFile ?: findCompanionIdsig(apkFile, displayPath)
@@ -67,8 +79,7 @@ class ApkSignatureAnalyzer(private val context: Context? = null) {
         val globalErrors = result.errors.map { it.toString() }.toMutableList()
         val globalWarnings = result.warnings.map { it.toString() }.toMutableList()
 
-        // Sur Android >= 24 (Nougat+), ApkVerifier ignore la vérification V1 lorsque V2/V3 est présent.
-        // Si des entrées JAR V1 (META-INF/*.RSA|DSA|EC) existent, on vérifie aussi V1 explicitement (API 21..23).
+        // Vérification V1 supplémentaire lorsque minSdk >= 24 fait sauter V1 à ApkVerifier
         val v1SupplementalResult = if (detectedBlocks.hasV1JarEntries && !result.isVerifiedUsingV1Scheme) {
             runCatching {
                 ApkVerifier.Builder(apkFile)
@@ -107,12 +118,16 @@ class ApkSignatureAnalyzer(private val context: Context? = null) {
                 )
             }
             if (v2Present) {
+                val v2Digests = result.v2SchemeSigners.flatMap { s ->
+                    s.contentDigests.map { d -> "${describeSignatureAlgorithmId(d.signatureAlgorithmId)} (${CertificateCryptoExtractor.bytesToHex(d.value).take(24)}…)" }
+                }
                 add(
                     SchemeVerificationDetail(
                         schemeName = "V2",
                         present = true,
                         verified = result.isVerifiedUsingV2Scheme,
                         signerCount = result.v2SchemeSigners.size,
+                        contentDigests = v2Digests,
                         errors = result.v2SchemeSigners.flatMap { s -> s.errors.map { it.toString() } },
                         warnings = result.v2SchemeSigners.flatMap { s -> s.warnings.map { it.toString() } }
                     )
@@ -121,12 +136,16 @@ class ApkSignatureAnalyzer(private val context: Context? = null) {
             if (v3Present) {
                 val minSdk = result.v3SchemeSigners.minOfOrNull { it.minSdkVersion }
                 val maxSdk = result.v3SchemeSigners.maxOfOrNull { it.maxSdkVersion }
+                val v3Digests = result.v3SchemeSigners.flatMap { s ->
+                    s.contentDigests.map { d -> "${describeSignatureAlgorithmId(d.signatureAlgorithmId)} (${CertificateCryptoExtractor.bytesToHex(d.value).take(24)}…)" }
+                }
                 add(
                     SchemeVerificationDetail(
                         schemeName = "V3",
                         present = true,
                         verified = result.isVerifiedUsingV3Scheme,
                         signerCount = result.v3SchemeSigners.size,
+                        contentDigests = v3Digests,
                         minSdkVersion = minSdk,
                         maxSdkVersion = maxSdk,
                         errors = result.v3SchemeSigners.flatMap { s -> s.errors.map { it.toString() } },
@@ -158,6 +177,7 @@ class ApkSignatureAnalyzer(private val context: Context? = null) {
                         present = true,
                         verified = result.isVerifiedUsingV4Scheme,
                         signerCount = maxOf(result.v4SchemeSigners.size, if (v4Summary != null) 1 else 0),
+                        contentDigests = v4Summary?.let { listOf("APK Digest: ${it.apkDigestHex}") } ?: emptyList(),
                         companionPath = idsigFile?.absolutePath,
                         errors = result.v4SchemeSigners.flatMap { s -> s.errors.map { it.toString() } },
                         warnings = result.v4SchemeSigners.flatMap { s -> s.warnings.map { it.toString() } }
@@ -174,7 +194,6 @@ class ApkSignatureAnalyzer(private val context: Context? = null) {
             else -> "Aucun schéma de signature détecté"
         }
 
-        // Collecte dédupliquée des certificats avec suivi des schémas d'origine
         val certMap = linkedMapOf<String, Pair<X509Certificate, MutableSet<String>>>()
         fun addCert(cert: X509Certificate?, scheme: String) {
             if (cert == null) return
@@ -203,7 +222,6 @@ class ApkSignatureAnalyzer(private val context: Context? = null) {
             addCert(cert, "")
         }
 
-        // Fallback si aucun certificat remonté par apksig (ex. APK corrompu avec bloc PKCS#7 présent)
         if (certMap.isEmpty() && detectedBlocks.v1RawPkcs7SignatureBytes != null) {
             runCatching {
                 val cf = CertificateFactory.getInstance("X.509")
@@ -224,7 +242,7 @@ class ApkSignatureAnalyzer(private val context: Context? = null) {
                 sourceSchemes = schemes.toList(),
                 rawSignatureBytes = rawSig
             ).let { details ->
-                if (includeRawBits) details else details.copy(signatureBitsHex = "(masqué)")
+                if (includeRawBits) details else details.copy(signatureBitsHex = "(masqué par option utilisateur)")
             }
         }
 
@@ -241,6 +259,13 @@ class ApkSignatureAnalyzer(private val context: Context? = null) {
         val stampSubject = stampInfo?.certificate?.subjectX500Principal?.name
         val stampVerified = stampInfo != null && stampInfo.errors.isEmpty()
 
+        val (rating, assessments) = computeSecurityAssessment(
+            isVerified = result.isVerified,
+            verifiedSchemes = verifiedSchemes,
+            certificates = certificates,
+            metadata = metadata
+        )
+
         return ApkVerificationReport(
             metadata = metadata,
             isVerified = result.isVerified,
@@ -254,8 +279,53 @@ class ApkSignatureAnalyzer(private val context: Context? = null) {
             v3Lineage = lineageNodes,
             certificates = certificates,
             globalErrors = globalErrors,
-            globalWarnings = globalWarnings
+            globalWarnings = globalWarnings,
+            fileForensics = fileForensics,
+            signingBlockSizeBytes = detectedBlocks.signingBlockSizeBytes,
+            signingBlockIdsNamed = detectedBlocks.blockIdsNamed,
+            securityRating = rating,
+            securityAssessments = assessments
         )
+    }
+
+    private fun computeSecurityAssessment(
+        isVerified: Boolean,
+        verifiedSchemes: List<String>,
+        certificates: List<CertificateDetails>,
+        metadata: ApkMetadata
+    ): Pair<String, List<String>> {
+        val notes = mutableListOf<String>()
+        if (!isVerified) {
+            notes.add("CRITIQUE : La signature APK n'a pas passé la vérification cryptographique intégrale.")
+            return "CRITIQUE — Signature invalide ou altérée" to notes
+        }
+        if (certificates.any { it.isDebugCertificate }) {
+            notes.add("ATTENTION : APK signé avec une clé de débogage (Android Debug).")
+        }
+        if (certificates.any { !it.isCurrentlyValid }) {
+            notes.add("ATTENTION : Au moins un certificat est hors période de validité.")
+        }
+        if (metadata.debuggable == true) {
+            notes.add("ATTENTION : android:debuggable=\"true\" détecté dans AndroidManifest.xml.")
+        }
+        if (metadata.usesCleartextTraffic == true) {
+            notes.add("INFO : Trafic réseau HTTP en clair autorisé (usesCleartextTraffic=true).")
+        }
+        if (verifiedSchemes.contains("V2") || verifiedSchemes.contains("V3") || verifiedSchemes.contains("V3.1")) {
+            notes.add("Protection d'intégrité APK complète active (${verifiedSchemes.joinToString(" + ")} — protection Janus/Zip-injection).")
+        } else if (verifiedSchemes == listOf("V1")) {
+            notes.add("ATTENTION : Seule la signature V1 JAR est présente (vulnérable aux modifications d'octets non couverts / Janus sur anciens Android).")
+        }
+        certificates.flatMap { it.cryptographicWarnings }.distinct().forEach { notes.add(it) }
+
+        val rating = when {
+            certificates.any { it.isDebugCertificate } || metadata.debuggable == true -> "FAIBLE / DÉVELOPPEMENT"
+            verifiedSchemes == listOf("V1") -> "MODÉRÉ (V1 uniquement)"
+            certificates.any { !it.isCurrentlyValid || it.signatureAlgorithm.contains("SHA1", ignoreCase = true) } ->
+                "BON (Avec algorithme ou certificat hérité)"
+            else -> "ÉLEVÉ — Signature moderne intègre"
+        }
+        return rating to notes
     }
 
     private fun findCompanionIdsig(apkFile: File, displayPath: String): File? {
@@ -266,6 +336,20 @@ class ApkSignatureAnalyzer(private val context: Context? = null) {
             if (orig.exists() && orig.isFile) return orig
         }
         return null
+    }
+
+    private fun describeSignatureAlgorithmId(id: Int): String = when (id) {
+        0x0101 -> "RSA_PSS_WITH_SHA256"
+        0x0102 -> "RSA_PSS_WITH_SHA512"
+        0x0103 -> "RSA_PKCS1_V1_5_WITH_SHA256"
+        0x0104 -> "RSA_PKCS1_V1_5_WITH_SHA512"
+        0x0201 -> "ECDSA_WITH_SHA256"
+        0x0202 -> "ECDSA_WITH_SHA512"
+        0x0301 -> "DSA_WITH_SHA256"
+        0x0421 -> "VERITY_RSA_PKCS1_V1_5_WITH_SHA256"
+        0x0423 -> "VERITY_ECDSA_WITH_SHA256"
+        0x0425 -> "VERITY_DSA_WITH_SHA256"
+        else -> "ALG_0x${Integer.toHexString(id)}"
     }
 
     private data class Quadruple<out A, out B, out C, out D>(val first: A, val second: B, val third: C, val fourth: D)

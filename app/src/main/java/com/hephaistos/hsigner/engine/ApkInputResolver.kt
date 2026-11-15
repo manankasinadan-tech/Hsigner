@@ -170,7 +170,7 @@ object ApkInputResolver {
                 }
             }
             val needsAllFiles = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
-                !Environment.isExternalStorageManager()
+                !runCatching { Environment.isExternalStorageManager() }.getOrDefault(false)
             val reason = if (needsAllFiles) {
                 "Permission fichier requise : HEPHAISTOS n'a pas transmis l'autorisation de lecture sur l'URI ($displayPath). Activez « Accès à tous les fichiers » pour HSIGNER dans Paramètres Android puis relancez Verify."
             } else {

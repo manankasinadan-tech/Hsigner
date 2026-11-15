@@ -1,7 +1,7 @@
 package com.hephaistos.hsigner.engine
 
 /**
- * Métadonnées applicatives extraites de l'APK analysé.
+ * Métadonnées applicatives et flags de sécurité extraits de l'APK analysé.
  */
 data class ApkMetadata(
     val appName: String,
@@ -10,8 +10,32 @@ data class ApkMetadata(
     val versionCode: Long,
     val minSdkVersion: Int?,
     val targetSdkVersion: Int?,
+    val compileSdkVersion: Int? = null,
     val displayPath: String,
-    val fileSizeBytes: Long
+    val fileSizeBytes: Long,
+    val debuggable: Boolean? = null,
+    val allowBackup: Boolean? = null,
+    val usesCleartextTraffic: Boolean? = null,
+    val testOnly: Boolean? = null,
+    val permissions: List<String> = emptyList()
+)
+
+/**
+ * Empreintes cryptographiques du fichier APK complet et structure interne ZIP.
+ */
+data class ApkFileForensics(
+    val fileSizeBytes: Long,
+    val crc32Hex: String,
+    val md5Hex: String,
+    val sha1Hex: String,
+    val sha256Hex: String,
+    val sha512Hex: String,
+    val totalZipEntries: Int,
+    val dexCount: Int,
+    val nativeLibrariesCount: Int,
+    val nativeAbis: List<String>,
+    val hasResourcesArsc: Boolean,
+    val hasKotlinMetadata: Boolean
 )
 
 /**
@@ -23,6 +47,7 @@ data class SchemeVerificationDetail(
     val verified: Boolean,
     val signerCount: Int,
     val algorithms: List<String> = emptyList(),
+    val contentDigests: List<String> = emptyList(),
     val minSdkVersion: Int? = null,
     val maxSdkVersion: Int? = null,
     val rotationMinSdkVersion: Int? = null,
@@ -75,7 +100,24 @@ data class CertificateDetails(
     val publicKeySizeBits: Int?,
     val signatureBase64: String,
     val rawCryptographicSignatureBase64: String?,
-    val sourceSchemes: List<String>
+    val sourceSchemes: List<String>,
+    // Champs d'audit X.509 avancés
+    val sha1ColonUpper: String = "",
+    val sha256ColonUpper: String = "",
+    val spkiSha256Hex: String = "",
+    val spkiSha256Base64: String = "",
+    val subjectComponents: Map<String, String> = emptyMap(),
+    val validityStatusLabel: String = "",
+    val validityDurationDays: Long = 0L,
+    val isCurrentlyValid: Boolean = true,
+    val isDebugCertificate: Boolean = false,
+    val basicConstraintsSummary: String? = null,
+    val keyUsageList: List<String> = emptyList(),
+    val extendedKeyUsageList: List<String> = emptyList(),
+    val subjectKeyIdentifierHex: String? = null,
+    val authorityKeyIdentifierHex: String? = null,
+    val extensionOidsSummary: List<String> = emptyList(),
+    val cryptographicWarnings: List<String> = emptyList()
 )
 
 /**
@@ -94,5 +136,10 @@ data class ApkVerificationReport(
     val v3Lineage: List<LineageCertificateNode>,
     val certificates: List<CertificateDetails>,
     val globalErrors: List<String>,
-    val globalWarnings: List<String>
+    val globalWarnings: List<String>,
+    val fileForensics: ApkFileForensics? = null,
+    val signingBlockSizeBytes: Long? = null,
+    val signingBlockIdsNamed: List<String> = emptyList(),
+    val securityRating: String = "",
+    val securityAssessments: List<String> = emptyList()
 )

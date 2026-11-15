@@ -106,10 +106,23 @@ class HsignerEngineTest {
         assertTrue(c.sha384Hex.length == 96)
         assertTrue(c.md5Hex.length == 32)
         assertTrue(c.crc32Hex.length == 8)
+        assertTrue(c.sha1ColonUpper.contains(":"))
+        assertTrue(c.sha256ColonUpper.contains(":"))
+        assertTrue(c.spkiSha256Hex.length == 64)
+        assertTrue(c.spkiSha256Base64.isNotBlank())
+        assertEquals("RSA", c.publicKeyAlgorithm)
+        assertEquals(2048, c.publicKeySizeBits)
         assertTrue(c.publicKeyFormatted.startsWith("OpenSSLRSAPublicKey{modulus="))
         assertTrue(c.signatureBitsHex.startsWith("3082"))
 
-        val textReport = SignatureReportFormatter.formatTerminalReport(report)
+        val forensics = report.fileForensics
+        assertTrue(forensics != null)
+        assertTrue(forensics!!.sha256Hex.length == 64)
+        assertTrue(forensics.totalZipEntries >= 2)
+        assertTrue(report.securityRating.isNotBlank())
+        assertTrue(report.signingBlockSizeBytes != null && report.signingBlockSizeBytes!! > 0L)
+
+        val textReport = SignatureReportFormatter.formatTerminalReport(report, "ultra_complet")
         assertTrue(textReport.contains("Vérification de la signature: Gestionnaire Test v16 (36)"))
         assertTrue(textReport.contains("Chemin: /storage/emulated/0/Download/signed_app.apk"))
         assertTrue(textReport.contains("Schéma de signature : V1 + V2 + V3 + V4"))
@@ -120,11 +133,27 @@ class HsignerEngineTest {
         assertTrue(textReport.contains("Base64 du certificat :"))
         assertTrue(textReport.contains("Bits de signature :"))
         assertTrue(textReport.contains("Base64 de signature :"))
+        assertTrue(textReport.contains("PROPRIÉTÉS X.509 AVANCÉES & EMPREINTES CONSOLE"))
+        assertTrue(textReport.contains("Pin SPKI SHA-256 (Base64) : sha256/"))
+        assertTrue(textReport.contains("EMPREINTES & STRUCTURE DU FICHIER APK"))
+        assertTrue(textReport.contains("APK SHA-256 :"))
+        assertTrue(textReport.contains("MANIFESTE & PROFIL SÉCURITÉ APK"))
+        assertTrue(textReport.contains("AUDIT TECHNIQUE V1 / V2 / V3 / V3.1 / V4"))
+        assertTrue(textReport.contains("SYNTHÈSE & NIVEAU DE CONFIANCE"))
+
+        val compactReport = SignatureReportFormatter.formatTerminalReport(report, "compact")
+        assertTrue(compactReport.contains("Vérification de la signature: Gestionnaire Test v16 (36)"))
+        assertTrue(!compactReport.contains("Base64 du certificat :"))
 
         val json = SignatureReportFormatter.toJson(report)
         assertTrue(json.getBoolean("verified"))
         assertEquals("V1 + V2 + V3 + V4", json.getString("scheme_summary"))
         assertEquals(1, json.getJSONArray("certificates").length())
+        assertTrue(json.has("apk_file_forensics"))
+        assertTrue(json.getString("security_rating").isNotBlank())
+        val certJson = json.getJSONArray("certificates").getJSONObject(0)
+        assertTrue(certJson.has("spki_sha256_base64"))
+        assertTrue(certJson.has("sha256_colon_upper"))
     }
 
     private fun createMinimalApk(target: File, axmlBytes: ByteArray) {
