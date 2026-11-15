@@ -52,6 +52,7 @@ object HephaistosContract {
     const val CMD_GET_README = "get_readme"
     const val CMD_EXPORT_README_FILE = "export_readme_file"
     const val CMD_INSPECT_CAPABILITIES = "inspect_capabilities"
+    const val CMD_OPEN_STORAGE_SETTINGS = "open_storage_settings"
 
     // Autorités Provider
     const val FILE_PROVIDER_AUTHORITY = "com.hephaistos.hsigner.fileprovider"

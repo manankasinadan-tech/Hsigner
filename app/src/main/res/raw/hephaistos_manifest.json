@@ -16,6 +16,7 @@
       {
         "type": "file_picker",
         "id": "apk_uris",
+        "title": "Sélectionner un ou plusieurs APK",
         "label": "Sélectionner un ou plusieurs APK",
         "hint": "Ouvrir le gestionnaire de fichiers pour choisir un ou plusieurs fichiers .apk (et .idsig V4 optionnel)",
         "mime_types": [
@@ -30,6 +31,7 @@
       {
         "type": "action_button",
         "id": "btn_verify",
+        "title": "Verify",
         "label": "Verify",
         "icon": "shield",
         "command_id": "verify_apk",
@@ -43,6 +45,7 @@
       {
         "type": "action_button",
         "id": "btn_readme",
+        "title": "Readme",
         "label": "Readme",
         "icon": "description",
         "command_id": "get_readme",
@@ -206,6 +209,26 @@
           "package": "com.hephaistos.hsigner",
           "extras": {
             "hephaistos.extra.COMMAND_ID": "inspect_capabilities",
+            "hephaistos.extra.SOURCE_PACKAGE": "com.hephaistos.launcher",
+            "hephaistos.extra.PARAMS_JSON": "{}"
+          }
+        }
+      },
+      {
+        "id": "open_storage_settings",
+        "title": "Ouvrir les paramètres d'accès aux fichiers",
+        "description": "Ouvre la page système Android pour autoriser HSIGNER à lire les APK directement lorsque l'application appelante n'a pas transmis les droits ClipData sur l'URI.",
+        "action": "com.hephaistos.action.EXECUTE",
+        "parameters": [],
+        "returns": {
+          "type": "object",
+          "description": "Statut d'ouverture de l'écran de permission système."
+        },
+        "example": {
+          "intent_action": "com.hephaistos.action.EXECUTE",
+          "package": "com.hephaistos.hsigner",
+          "extras": {
+            "hephaistos.extra.COMMAND_ID": "open_storage_settings",
             "hephaistos.extra.SOURCE_PACKAGE": "com.hephaistos.launcher",
             "hephaistos.extra.PARAMS_JSON": "{}"
           }

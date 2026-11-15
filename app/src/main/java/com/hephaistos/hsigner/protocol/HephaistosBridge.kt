@@ -168,7 +168,7 @@ class HephaistosBridge(private val context: Context) {
     }
 
     companion object {
-        private const val MAX_LOG_CHUNK_CHARS = 32_000
+        private const val MAX_LOG_CHUNK_CHARS = 8_000
 
         internal fun chunkMessage(message: String, maxChars: Int = MAX_LOG_CHUNK_CHARS): List<String> {
             if (message.length <= maxChars) return listOf(message)

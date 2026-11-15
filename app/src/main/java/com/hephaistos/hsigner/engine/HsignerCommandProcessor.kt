@@ -1,7 +1,10 @@
 package com.hephaistos.hsigner.engine
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import androidx.core.content.FileProvider
 import com.hephaistos.hsigner.R
 import com.hephaistos.hsigner.protocol.HephaistosBridge
@@ -13,7 +16,7 @@ import java.util.UUID
 
 /**
  * Orchestrateur métier des commandes HSIGNER (verify_apk, get_readme, export_readme_file,
- * inspect_capabilities), partagé entre ModuleEngineService et HsignerContentProvider.
+ * inspect_capabilities, open_storage_settings), partagé entre ModuleEngineService et HsignerContentProvider.
  */
 class HsignerCommandProcessor(
     private val context: Context,
@@ -41,8 +44,10 @@ class HsignerCommandProcessor(
                 handleExportReadmeFile(params, sourcePackage, emitBroadcasts)
             HephaistosContract.CMD_INSPECT_CAPABILITIES ->
                 handleInspectCapabilities(sourcePackage, emitBroadcasts)
+            HephaistosContract.CMD_OPEN_STORAGE_SETTINGS ->
+                handleOpenStorageSettings(sourcePackage, emitBroadcasts)
             else -> {
-                val errMsg = "Commande inconnue : '$commandId'. Commandes supportées : verify_apk, get_readme, export_readme_file, inspect_capabilities."
+                val errMsg = "Commande inconnue : '$commandId'. Commandes supportées : verify_apk, get_readme, export_readme_file, inspect_capabilities, open_storage_settings."
                 if (emitBroadcasts) {
                     bridge.logErr(errMsg, sourcePackage)
                     bridge.sendCommandResult(commandId, sourcePackage, null, errMsg)
@@ -106,11 +111,46 @@ class HsignerCommandProcessor(
             )
         }
 
-        val resolvedInputs = ApkInputResolver.resolveAll(context, rawApkInputs, rawIdsigInputs)
+        val resolvedInputs = try {
+            ApkInputResolver.resolveAll(context, rawApkInputs, rawIdsigInputs)
+        } catch (permErr: StorageAccessDeniedException) {
+            val errMsg = permErr.message ?: "Accès au fichier refusé par Android."
+            if (emitBroadcasts) {
+                bridge.logErr(errMsg, sourcePackage)
+                bridge.progress(
+                    taskId = taskId,
+                    title = "HSIGNER — Permission requise",
+                    message = errMsg,
+                    progress = 100,
+                    completed = true,
+                    error = errMsg,
+                    canCancel = false,
+                    targetSourcePackage = sourcePackage
+                )
+                if (permErr.needsAllFilesAccess) {
+                    bridge.showPopup(
+                        popupId = "storage_permission_popup",
+                        title = "Permission Accès Fichiers requise",
+                        message = "HEPHAISTOS n'a pas transmis l'autorisation de lecture sur ce fichier. Autorisez « Accès à tous les fichiers » pour HSIGNER dans les paramètres Android, puis relancez Verify.",
+                        confirmLabel = "Ouvrir Paramètres",
+                        cancelLabel = "Fermer",
+                        commandId = HephaistosContract.CMD_OPEN_STORAGE_SETTINGS
+                    )
+                }
+                bridge.sendCommandResult(HephaistosContract.CMD_VERIFY_APK, sourcePackage, null, errMsg)
+            }
+            return JSONObject().apply {
+                put("status", "permission_required")
+                put("error", errMsg)
+                permErr.decodedPath?.let { put("decoded_path", it) }
+            }
+        }
+
         val analyzer = ApkSignatureAnalyzer(context)
         val resultsArray = JSONArray()
         val combinedText = StringBuilder()
         var allVerified = true
+        var lastSummary = ""
         val sharedUris = mutableListOf<Uri>()
 
         try {
@@ -159,6 +199,7 @@ class HsignerCommandProcessor(
                         includeRawBits = includeRawBits
                     )
                     if (!report.isVerified) allVerified = false
+                    lastSummary = "${report.metadata.appName} — ${report.schemeSummary} (${report.certificates.size} cert.)"
 
                     val terminalBlock = SignatureReportFormatter.formatTerminalReport(report)
                     if (combinedText.isNotEmpty()) {
@@ -184,7 +225,6 @@ class HsignerCommandProcessor(
                 }
             }
 
-            // Export fichier rapport complet pour consultation ou contournement de limite IPC
             val reportFile = writeExportFile("hsigner_exports", "HSIGNER_REPORT_${System.currentTimeMillis()}.txt", combinedText.toString())
             val reportUri = getFileProviderUri(reportFile)
             sharedUris.add(reportUri)
@@ -202,10 +242,15 @@ class HsignerCommandProcessor(
             }
 
             if (emitBroadcasts) {
+                val summaryMsg = if (resolvedInputs.size == 1 && lastSummary.isNotBlank()) {
+                    "$lastSummary — Ouvrez le terminal (>_) pour consulter tous les détails."
+                } else {
+                    "${resolvedInputs.size} APK(s) analysé(s) — ${if (allVerified) "Toutes signatures valides" else "Alerte signature détectée"} (Ouvrez le terminal >_)"
+                }
                 bridge.progress(
                     taskId = taskId,
                     title = "HSIGNER — Terminé",
-                    message = "${resolvedInputs.size} APK(s) analysé(s) — ${if (allVerified) "Toutes signatures valides" else "Alerte signature détectée"}",
+                    message = summaryMsg,
                     progress = 100,
                     completed = true,
                     canCancel = false,
@@ -222,6 +267,51 @@ class HsignerCommandProcessor(
         } finally {
             resolvedInputs.forEach { runCatching { it.close() } }
         }
+    }
+
+    private fun handleOpenStorageSettings(
+        sourcePackage: String?,
+        emitBroadcasts: Boolean
+    ): JSONObject {
+        val opened = runCatching {
+            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Intent(
+                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    Uri.parse("package:${context.packageName}")
+                )
+            } else {
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:${context.packageName}")
+                )
+            }.apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            true
+        }.getOrElse {
+            runCatching {
+                val fallback = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(fallback)
+                true
+            }.getOrDefault(false)
+        }
+
+        val resultJson = JSONObject().apply {
+            put("status", if (opened) "success" else "error")
+            put("settings_opened", opened)
+        }
+        if (emitBroadcasts) {
+            if (opened) {
+                bridge.logInfo("Paramètres Android ouverts : activez « Accès à tous les fichiers » pour HSIGNER puis relancez Verify.", sourcePackage)
+            } else {
+                bridge.logErr("Impossible d'ouvrir automatiquement les paramètres. Ouvrez Paramètres > Applications > HSIGNER > Accès spéciaux manuellement.", sourcePackage)
+            }
+            bridge.sendCommandResult(HephaistosContract.CMD_OPEN_STORAGE_SETTINGS, sourcePackage, resultJson)
+        }
+        return resultJson
     }
 
     private fun handleGetReadme(
@@ -346,7 +436,8 @@ class HsignerCommandProcessor(
                 HephaistosContract.CMD_VERIFY_APK,
                 HephaistosContract.CMD_GET_README,
                 HephaistosContract.CMD_EXPORT_README_FILE,
-                HephaistosContract.CMD_INSPECT_CAPABILITIES
+                HephaistosContract.CMD_INSPECT_CAPABILITIES,
+                HephaistosContract.CMD_OPEN_STORAGE_SETTINGS
             )))
             put("manifest", runCatching { JSONObject(readRawManifestString()) }.getOrNull())
         }

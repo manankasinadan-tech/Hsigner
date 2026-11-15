@@ -2,6 +2,8 @@ package com.hephaistos.hsigner.engine
 
 import android.content.Context
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
 import android.provider.OpenableColumns
 import org.json.JSONArray
 import java.io.Closeable
@@ -9,10 +11,22 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
 
+class StorageAccessDeniedException(
+    val uriSpec: String,
+    val decodedPath: String?,
+    val needsAllFilesAccess: Boolean,
+    message: String
+) : SecurityException(message)
+
 /**
  * Résout des entrées hétérogènes (URIs content:// du file_picker HEPHAISTOS, file://,
- * chemins locaux directs, tableaux JSON) vers des fichiers exploitables par ApkVerifier,
- * sans nécessiter READ_EXTERNAL_STORAGE.
+ * chemins locaux directs, tableaux JSON) vers des fichiers exploitables par ApkVerifier.
+ *
+ * Stratégie multi-couches :
+ * 1) Lecture directe si chemin local / file:// lisible.
+ * 2) Lecture via ContentResolver.openInputStream(uri) si l'hôte a accordé FLAG_GRANT_READ_URI_PERMISSION.
+ * 3) Fallback automatique vers le chemin décodé /storage/emulated/0/... si l'hôte a transmis l'URI
+ *    en chaîne dans PARAMS_JSON sans ClipData grant et que HSIGNER dispose de l'accès fichiers.
  */
 object ApkInputResolver {
 
@@ -28,10 +42,6 @@ object ApkInputResolver {
         }
     }
 
-    /**
-     * Extrait une liste plate de chaînes depuis un champ JSON qui peut être
-     * un JSONArray, une chaîne JSON sérialisée, ou une liste séparée par virgules/lignes.
-     */
     fun parseUriList(rawValue: Any?): List<String> {
         return when (rawValue) {
             null -> emptyList()
@@ -80,7 +90,6 @@ object ApkInputResolver {
             }
         }
 
-        // Pré-résolution des fichiers .idsig disponibles
         val resolvedIdsigs = idsigSpecs.mapNotNull { spec ->
             materializeSingle(context, spec, "idsig")?.let { spec to it }
         }
@@ -139,21 +148,94 @@ object ApkInputResolver {
 
         // 2. URI content:// (File Picker SAF de HEPHAISTOS)
         val uri = Uri.parse(trimmed)
-        val displayPath = resolveDisplayPath(context, uri) ?: trimmed
+        val decodedLocalPath = decodeSafDocumentPath(uri)
+        val displayPath = resolveDisplayPath(context, uri, decodedLocalPath) ?: trimmed
         val tmpDir = File(context.cacheDir, "hsigner_tmp").apply { mkdirs() }
         val tmpFile = File(tmpDir, "input_${UUID.randomUUID()}.$extension")
 
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            FileOutputStream(tmpFile).use { output ->
-                input.copyTo(output, bufferSize = 64 * 1024)
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                FileOutputStream(tmpFile).use { output ->
+                    input.copyTo(output, bufferSize = 64 * 1024)
+                }
+                return Triple(tmpFile, displayPath, tmpFile)
             }
-        } ?: throw IllegalStateException("Flux illisible pour l'URI : $trimmed")
+        } catch (sec: SecurityException) {
+            runCatching { tmpFile.delete() }
+            // 3. Fallback direct si le chemin réel est accessible (ex: MANAGE_EXTERNAL_STORAGE accordé)
+            if (!decodedLocalPath.isNullOrBlank()) {
+                val directFile = File(decodedLocalPath)
+                if (directFile.exists() && directFile.canRead()) {
+                    return Triple(directFile, directFile.absolutePath, null)
+                }
+            }
+            val needsAllFiles = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+                !Environment.isExternalStorageManager()
+            val reason = if (needsAllFiles) {
+                "Permission fichier requise : HEPHAISTOS n'a pas transmis l'autorisation de lecture sur l'URI ($displayPath). Activez « Accès à tous les fichiers » pour HSIGNER dans Paramètres Android puis relancez Verify."
+            } else {
+                "Accès refusé par Android pour $displayPath : ${sec.message}"
+            }
+            throw StorageAccessDeniedException(
+                uriSpec = trimmed,
+                decodedPath = decodedLocalPath,
+                needsAllFilesAccess = needsAllFiles,
+                message = reason
+            )
+        }
 
-        return Triple(tmpFile, displayPath, tmpFile)
+        // Si openInputStream a retourné null, tenter le chemin décodé
+        if (!decodedLocalPath.isNullOrBlank()) {
+            val directFile = File(decodedLocalPath)
+            if (directFile.exists() && directFile.canRead()) {
+                return Triple(directFile, directFile.absolutePath, null)
+            }
+        }
+
+        throw IllegalStateException("Flux illisible pour l'URI : $trimmed")
     }
 
-    private fun resolveDisplayPath(context: Context, uri: Uri): String? {
+    /**
+     * Décode une URI SAF (ExternalStorageProvider / DownloadsProvider) en chemin local réel
+     * ex: content://com.android.externalstorage.documents/document/primary%3ADownload%2Fapp.apk
+     *  -> /storage/emulated/0/Download/app.apk
+     */
+    fun decodeSafDocumentPath(uri: Uri): String? {
+        val authority = uri.authority ?: return null
+        val pathSegments = uri.pathSegments ?: emptyList()
+
+        if (authority == "com.android.externalstorage.documents") {
+            val docId = when {
+                pathSegments.size >= 2 && pathSegments[pathSegments.size - 2] == "document" ->
+                    pathSegments.last()
+                else -> uri.lastPathSegment
+            } ?: return null
+
+            val colonIdx = docId.indexOf(':')
+            if (colonIdx <= 0) return null
+            val volumeId = docId.substring(0, colonIdx)
+            val relativePath = docId.substring(colonIdx + 1).trimStart('/')
+            return if (volumeId.equals("primary", ignoreCase = true)) {
+                if (relativePath.isBlank()) "/storage/emulated/0" else "/storage/emulated/0/$relativePath"
+            } else {
+                if (relativePath.isBlank()) "/storage/$volumeId" else "/storage/$volumeId/$relativePath"
+            }
+        }
+
+        if (authority == "com.android.providers.downloads.documents") {
+            val docId = uri.lastPathSegment ?: return null
+            if (docId.startsWith("raw:")) {
+                return docId.removePrefix("raw:")
+            }
+        }
+
+        return null
+    }
+
+    private fun resolveDisplayPath(context: Context, uri: Uri, decodedLocalPath: String?): String? {
         if (uri.scheme == "file") return uri.path
+        if (!decodedLocalPath.isNullOrBlank()) return decodedLocalPath
+
         var displayName: String? = null
         runCatching {
             context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
@@ -168,15 +250,6 @@ object ApkInputResolver {
                         displayName = cursor.getString(nameIdx)
                     }
                 }
-            }
-        }
-
-        // Reconstruction propre des chemins DocumentsProvider standards (primary:...) si possible
-        val lastSeg = uri.lastPathSegment
-        if (!lastSeg.isNullOrBlank() && lastSeg.contains(":")) {
-            val parts = lastSeg.split(":", limit = 2)
-            if (parts.size == 2 && parts[0].equals("primary", ignoreCase = true)) {
-                return "/storage/emulated/0/${parts[1]}"
             }
         }
         return displayName ?: uri.toString()

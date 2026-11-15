@@ -68,12 +68,15 @@ class HsignerProtocolRobolectricTest {
         for (i in 0 until elements.length()) {
             val el = elements.getJSONObject(i)
             val type = el.getString("type")
-            if (type == "file_picker") hasFilePicker = true
+            if (type == "file_picker") {
+                hasFilePicker = true
+                assertFalse(el.optString("title").isBlank())
+            }
             if (type == "action_button") {
                 val cmdId = el.getString("command_id")
                 assertTrue("UI command_id '$cmdId' must be documented in manual.commands", manualCommandIds.contains(cmdId))
-                if (el.getString("label") == "Verify") hasVerifyBtn = true
-                if (el.getString("label") == "Readme") hasReadmeBtn = true
+                if (el.optString("title") == "Verify" || el.optString("label") == "Verify") hasVerifyBtn = true
+                if (el.optString("title") == "Readme" || el.optString("label") == "Readme") hasReadmeBtn = true
             }
         }
         for (i in 0 until popups.length()) {
@@ -84,6 +87,11 @@ class HsignerProtocolRobolectricTest {
         assertTrue(hasFilePicker)
         assertTrue(hasVerifyBtn)
         assertTrue(hasReadmeBtn)
+
+        val decoded = com.hephaistos.hsigner.engine.ApkInputResolver.decodeSafDocumentPath(
+            Uri.parse("content://com.android.externalstorage.documents/document/primary%3ARecordings%2FStorageManager%2FStorageManager.apk")
+        )
+        assertEquals("/storage/emulated/0/Recordings/StorageManager/StorageManager.apk", decoded)
     }
 
     @Test
