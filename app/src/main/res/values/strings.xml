@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">HSIGNER</string>
+    <string name="notification_channel_name">HSIGNER Vérification</string>
+    <string name="notification_channel_description">Notifications de progression lors de la vérification des signatures APK</string>
+    <string name="notification_verifying_title">HSIGNER en cours d\'exécution</string>
+    <string name="notification_verifying_text">Analyse des signatures APK (V1/V2/V3/V4)…</string>
+</resources>

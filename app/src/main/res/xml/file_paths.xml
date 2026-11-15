@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <files-path
+        name="hsigner_docs"
+        path="hsigner_docs/" />
+    <cache-path
+        name="hsigner_exports"
+        path="hsigner_exports/" />
+</paths>

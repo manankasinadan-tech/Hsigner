@@ -1,0 +1,216 @@
+{
+  "id": "hsigner",
+  "name": "HSIGNER",
+  "version": "1.0.0",
+  "package": "com.hephaistos.hsigner",
+  "icon": "shield",
+  "ui": {
+    "default_layout": "list",
+    "elements": [
+      {
+        "type": "card",
+        "id": "hsigner_info_card",
+        "title": "HSIGNER — Inspecteur & Vérificateur de Signature APK",
+        "subtitle": "Détection cryptographique complète V1 (JAR) • V2 • V3 • V3.1 (Key Rotation) • V4 (.idsig) et audit X.509 détaillé."
+      },
+      {
+        "type": "file_picker",
+        "id": "apk_uris",
+        "label": "Sélectionner un ou plusieurs APK",
+        "hint": "Ouvrir le gestionnaire de fichiers pour choisir un ou plusieurs fichiers .apk (et .idsig V4 optionnel)",
+        "mime_types": [
+          "application/vnd.android.package-archive",
+          "application/octet-stream",
+          "*/*"
+        ],
+        "allow_multiple": true,
+        "multiple": true,
+        "required": true
+      },
+      {
+        "type": "action_button",
+        "id": "btn_verify",
+        "label": "Verify",
+        "icon": "shield",
+        "command_id": "verify_apk",
+        "style": "primary",
+        "params": {
+          "apk_uris": "{{apk_uris}}",
+          "include_raw_bits": true,
+          "include_json": true
+        }
+      },
+      {
+        "type": "action_button",
+        "id": "btn_readme",
+        "label": "Readme",
+        "icon": "description",
+        "command_id": "get_readme",
+        "style": "secondary",
+        "params": {
+          "format": "both",
+          "open_popup": true
+        }
+      }
+    ],
+    "popups": [
+      {
+        "id": "readme_download_popup",
+        "title": "HSIGNER — Guide Inter-Modulaire & IA",
+        "message": "La documentation technique complète (actions Intent, extras, schémas JSON, commandes terminales, ContentProvider et guide pour IA) a été affichée dans le terminal. Télécharger le fichier HSIGNER_README.md ?",
+        "confirm_label": "Télécharger",
+        "cancel_label": "Fermer",
+        "command_id": "export_readme_file"
+      }
+    ]
+  },
+  "manual": {
+    "protocol_version": "1.0",
+    "summary": "Moteur headless Android de vérification cryptographique d'APK (schémas V1, V2, V3, V3.1 et V4 .idsig) et d'extraction exhaustive de certificats X.509 (numéro de série, DN, validité FR, hashCode, CRC32, MD5, SHA-1/224/256/384/512, Base64, bits hexadécimaux, clé publique et signature brute). Peut être commandé par HEPHAISTOS, par tout autre module satellite com.hephaistos.*, par un terminal ou par une application tierce via Service Intent, Broadcast ou ContentProvider.",
+    "target_action": "com.hephaistos.action.EXECUTE",
+    "callback_action": "com.hephaistos.action.COMMAND_RESULT",
+    "service_component": "com.hephaistos.hsigner/com.hephaistos.hsigner.ModuleEngineService",
+    "content_provider_authority": "com.hephaistos.hsigner.provider",
+    "commands": [
+      {
+        "id": "verify_apk",
+        "title": "Verify APK Signature (V1 / V2 / V3 / V3.1 / V4)",
+        "description": "Analyse et vérifie la signature cryptographique d'un ou plusieurs fichiers APK (via content:// URI ou chemin fichier lisible), détecte tous les schémas actifs (V1, V2, V3, V3.1, V4), extrait les métadonnées applicatives et restitue chaque certificat X.509 et clé publique dans le terminal (LOG) ainsi qu'en JSON structuré (COMMAND_RESULT).",
+        "action": "com.hephaistos.action.EXECUTE",
+        "parameters": [
+          {
+            "name": "apk_uris",
+            "type": "array<string>|string",
+            "required": true,
+            "default": [],
+            "description": "Liste d'URIs content:// ou chemins vers les fichiers .apk (accepte aussi un tableau JSON, une chaîne unique ou une liste séparée par virgules). Les fichiers .idsig V4 peuvent être inclus dans la même liste ou via idsig_uris."
+          },
+          {
+            "name": "idsig_uris",
+            "type": "array<string>",
+            "required": false,
+            "default": [],
+            "description": "URIs optionnelles de fichiers compagnons .idsig pour la vérification V4 explicite (si absentes, HSIGNER recherche automatiquement <apk>.idsig pour les chemins locaux ou les .idsig fournis dans apk_uris)."
+          },
+          {
+            "name": "include_raw_bits",
+            "type": "boolean",
+            "required": false,
+            "default": true,
+            "description": "Inclut les bits hexadécimaux complets du certificat DER, le Base64 du certificat et le Base64 de signature."
+          },
+          {
+            "name": "include_json",
+            "type": "boolean",
+            "required": false,
+            "default": true,
+            "description": "Inclut la structure JSON complète des résultats dans RESULT_JSON."
+          }
+        ],
+        "returns": {
+          "type": "object",
+          "description": "Objet JSON contenant status, total_apks, all_verified, results[] (app_name, version_name, version_code, package_name, path, schemes, v1/v2/v3/v3_1/v4 details, certificates[], errors[], warnings[], terminal_report) et export_report_uri."
+        },
+        "example": {
+          "intent_action": "com.hephaistos.action.EXECUTE",
+          "package": "com.hephaistos.hsigner",
+          "extras": {
+            "hephaistos.extra.COMMAND_ID": "verify_apk",
+            "hephaistos.extra.SOURCE_PACKAGE": "com.hephaistos.terminal",
+            "hephaistos.extra.PARAMS_JSON": "{\"apk_uris\":[\"content://com.android.externalstorage.documents/document/primary%3ADownload%2Fapp.apk\"],\"include_raw_bits\":true}"
+          }
+        }
+      },
+      {
+        "id": "get_readme",
+        "title": "Afficher et préparer le Readme d'intégration",
+        "description": "Affiche dans le terminal HEPHAISTOS le mode d'emploi complet permettant à toute application, terminal ou IA de commander HSIGNER, génère le document téléchargeable HSIGNER_README.md et déclenche la popup de téléchargement si demandé.",
+        "action": "com.hephaistos.action.EXECUTE",
+        "parameters": [
+          {
+            "name": "format",
+            "type": "string",
+            "required": false,
+            "default": "both",
+            "description": "Format souhaité : 'markdown', 'json' ou 'both'."
+          },
+          {
+            "name": "open_popup",
+            "type": "boolean",
+            "required": false,
+            "default": true,
+            "description": "Si true, envoie com.hephaistos.action.SHOW_POPUP à HEPHAISTOS pour proposer le téléchargement immédiat du fichier."
+          }
+        ],
+        "returns": {
+          "type": "object",
+          "description": "Contient readme_markdown, readme_uri (content:// FileProvider), content_provider_uri (content://com.hephaistos.hsigner.provider/readme), filename ('HSIGNER_README.md') et protocol_spec."
+        },
+        "example": {
+          "intent_action": "com.hephaistos.action.EXECUTE",
+          "package": "com.hephaistos.hsigner",
+          "extras": {
+            "hephaistos.extra.COMMAND_ID": "get_readme",
+            "hephaistos.extra.SOURCE_PACKAGE": "com.hephaistos.launcher",
+            "hephaistos.extra.PARAMS_JSON": "{\"format\":\"both\",\"open_popup\":false}"
+          }
+        }
+      },
+      {
+        "id": "export_readme_file",
+        "title": "Exporter / Télécharger le document HSIGNER_README.md",
+        "description": "Écrit le guide complet HSIGNER_README.md sur disque interne, accorde les droits de lecture URI au SOURCE_PACKAGE et à com.hephaistos.launcher, et retourne l'URI téléchargeable prête à être copiée ou sauvegardée.",
+        "action": "com.hephaistos.action.EXECUTE",
+        "parameters": [
+          {
+            "name": "target_uri",
+            "type": "string",
+            "required": false,
+            "default": "",
+            "description": "URI content:// optionnelle (ex. créée via SAF ACTION_CREATE_DOCUMENT) dans laquelle écrire directement HSIGNER_README.md."
+          },
+          {
+            "name": "format",
+            "type": "string",
+            "required": false,
+            "default": "markdown",
+            "description": "Format du document exporté : 'markdown' (.md) ou 'json' (.json)."
+          }
+        ],
+        "returns": {
+          "type": "object",
+          "description": "Contient download_uri, provider_uri, filename, byte_size et written_to_target."
+        },
+        "example": {
+          "intent_action": "com.hephaistos.action.EXECUTE",
+          "package": "com.hephaistos.hsigner",
+          "extras": {
+            "hephaistos.extra.COMMAND_ID": "export_readme_file",
+            "hephaistos.extra.SOURCE_PACKAGE": "com.hephaistos.launcher",
+            "hephaistos.extra.PARAMS_JSON": "{\"format\":\"markdown\"}"
+          }
+        }
+      },
+      {
+        "id": "inspect_capabilities",
+        "title": "Inspecter les capacités cryptographiques du moteur",
+        "description": "Retourne de manière synchrone ou asynchrone les versions supportées, schémas de signature (V1, V2, V3, V3.1, V4), algorithmes de hachage et points d'entrée IPC.",
+        "action": "com.hephaistos.action.EXECUTE",
+        "parameters": [],
+        "returns": {
+          "type": "object",
+          "description": "Capacités du moteur HSIGNER et métadonnées de protocole."
+        },
+        "example": {
+          "intent_action": "com.hephaistos.action.EXECUTE",
+          "package": "com.hephaistos.hsigner",
+          "extras": {
+            "hephaistos.extra.COMMAND_ID": "inspect_capabilities",
+            "hephaistos.extra.SOURCE_PACKAGE": "com.hephaistos.launcher",
+            "hephaistos.extra.PARAMS_JSON": "{}"
+          }
+        }
+      }
+    ]
+  }
+}

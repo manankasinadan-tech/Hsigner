@@ -1,0 +1,6 @@
+{
+  "name": "HSIGNER",
+  "description": "Headless Android APK signature verification engine (V1, V2, V3, V3.1, V4) for the HEPHAISTOS modular ecosystem.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

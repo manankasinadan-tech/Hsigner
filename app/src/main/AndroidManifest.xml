@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Permissions minimales strictes : aucun accès large au stockage (consomme les content:// URIs de HEPHAISTOS) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Découverte mutuelle dans l'écosystème HEPHAISTOS -->
+    <queries>
+        <package android:name="com.hephaistos.launcher" />
+        <intent>
+            <action android:name="com.hephaistos.action.MODULE" />
+        </intent>
+        <intent>
+            <action android:name="com.hephaistos.action.EXECUTE" />
+        </intent>
+    </queries>
+
+    <!-- Application 100 % headless : aucune Activity, aucun launcher intent-filter -->
+    <application
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MyApplication">
+
+        <!-- Service moteur principal découvert et commandé par HEPHAISTOS et les modules tiers -->
+        <service
+            android:name="com.hephaistos.hsigner.ModuleEngineService"
+            android:exported="true"
+            android:foregroundServiceType="dataSync">
+            <intent-filter>
+                <action android:name="com.hephaistos.action.MODULE" />
+                <action android:name="com.hephaistos.action.EXECUTE" />
+            </intent-filter>
+            <meta-data
+                android:name="com.hephaistos.module.manifest"
+                android:resource="@raw/hephaistos_manifest" />
+        </service>
+
+        <!-- Récepteur d'annulation des tâches longues -->
+        <receiver
+            android:name="com.hephaistos.hsigner.ModuleCancelReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.hephaistos.action.CANCEL_TASK" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Récepteur optionnel pour les terminaux / scripts envoyant des commandes via Broadcast -->
+        <receiver
+            android:name="com.hephaistos.hsigner.ModuleBroadcastCommandReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.hephaistos.hsigner.action.EXECUTE_BROADCAST" />
+            </intent-filter>
+        </receiver>
+
+        <!-- FileProvider sécurisé pour le téléchargement du Readme et des rapports exportés -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.hephaistos.hsigner.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <!-- ContentProvider inter-modules pour lecture synchrone du Readme et appels call() -->
+        <provider
+            android:name="com.hephaistos.hsigner.HsignerContentProvider"
+            android:authorities="com.hephaistos.hsigner.provider"
+            android:exported="true" />
+
+    </application>
+
+</manifest>
